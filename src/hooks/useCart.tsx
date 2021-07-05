@@ -1,3 +1,5 @@
+import curriedAdjustHue from "polished/lib/color/adjustHue";
+import { useRef } from "react";
 import { useEffect } from "react";
 import { createContext, ReactNode, useContext, useState } from "react";
 import { toast } from "react-toastify";
@@ -33,34 +35,47 @@ export function CartProvider({ children }: CartProviderProps): JSX.Element {
     return [];
   });
 
+  const prevCartRef = useRef<Product[]>();
   useEffect(() => {
-    localStorage.setItem("@RocketShoes:cart", JSON.stringify(cart));
-  }, [cart]);
+    prevCartRef.current = cart;
+  });
+
+  const cartPreviousValue = prevCartRef.current ?? cart;
+
+  useEffect(() => {
+    if (cartPreviousValue !== cart) {
+      localStorage.setItem("@RocketShoes:cart", JSON.stringify(cart));
+    }
+  }, [cart, cartPreviousValue]);
 
   const addProduct = async (productId: number) => {
-    const productStock = await (await api.get(`/stock/${productId}`)).data;
-    const productAlreadyOnCart = cart.find((item) => item.id === productId);
-    const products = await (await api.get(`/products`)).data;
-    const foundProduct = await products.find(
-      (item: Product) => item.id === productId
-    );
-
     try {
-      if (!foundProduct) {
+      const updatedCart = cart.map((product) => ({ ...product }));
+      const productExists = updatedCart.find((item) => item.id === productId);
+
+      const stock = await api.get(`/stock/${productId}`);
+
+      const stockAmount = stock.data.amount;
+      const currentAmount = productExists ? productExists.amount : 0;
+      const amount = currentAmount + 1;
+
+      if (amount > stockAmount) {
+        toast.error("Quantidade solicitada fora de estoque");
         return;
       }
-      if (productAlreadyOnCart) {
-        if (productStock.amount >= productAlreadyOnCart.amount + 1) {
-          const newCart = cart.map((item) => {
-            if (item.id === productId)
-              return { ...item, amount: item.amount + 1 };
-            else return item;
-          });
-          setCart(newCart);
-        } else {
-          toast.error("Quantidade solicitada fora de estoque");
-        }
-      } else setCart([...cart, { ...foundProduct, amount: 1 }]);
+      if (productExists) {
+        productExists.amount = amount;
+      } else {
+        const product = await api.get(`/products/${productId}`);
+
+        const newProduct = {
+          ...product.data,
+          amount: 1,
+        };
+        updatedCart.push(newProduct);
+      }
+
+      setCart(updatedCart);
     } catch {
       toast.error("Erro na adição do produto");
     }
@@ -68,8 +83,17 @@ export function CartProvider({ children }: CartProviderProps): JSX.Element {
 
   const removeProduct = (productId: number) => {
     try {
-      const updatedCart = cart.filter((product) => product.id !== productId);
-      setCart(updatedCart);
+      const updatedCart = cart.map((product) => ({ ...product }));
+      const productIndex = updatedCart.findIndex(
+        (product) => product.id === productId
+      );
+
+      if (productIndex >= 0) {
+        updatedCart.splice(productIndex, 1);
+        setCart(updatedCart);
+      } else {
+        throw Error();
+      }
     } catch {
       toast.error("Erro na remoção do produto");
     }
@@ -79,29 +103,28 @@ export function CartProvider({ children }: CartProviderProps): JSX.Element {
     productId,
     amount,
   }: UpdateProductAmount) => {
-    const productStock = await (await api.get(`/stock/${productId}`)).data;
-    const products = await (await api.get(`/products`)).data;
-    const productExists = await products.find(
-      (item: Product) => item.id === productId
-    );
     try {
-      if (amount < 1) {
+      if (amount <= 0) {
         return;
       }
 
-      if (!productExists) {
+      const stock = await api.get(`/stock/${productId}`);
+
+      const stockAmount = stock.data.amount;
+
+      if (amount > stockAmount) {
+        toast.error("Quantidade solicitada fora de estoque");
         return;
       }
 
-      if (productStock.amount >= amount) {
-        const updatedCart = cart.map((item) => {
-          if (item.id === productId) return { ...item, amount };
-          else return item;
-        });
+      const updatedCart = cart.map((product) => ({ ...product }));
+      const productExists = updatedCart.find((item) => item.id === productId);
 
+      if (productExists) {
+        productExists.amount = amount;
         setCart(updatedCart);
       } else {
-        toast.error("Quantidade solicitada fora de estoque");
+        throw Error();
       }
     } catch {
       toast.error("Erro na alteração de quantidade do produto");
